@@ -1,0 +1,253 @@
+# CODEOWNERS - 自動分配代碼審查者
+
+> 此文件應放在項目根目錄 `.github/CODEOWNERS`
+> GitHub 會根據此文件自動為 PR 指派審查者
+
+---
+
+## 用法說明
+
+### 格式
+
+```
+<pattern>  <owner1>  <owner2>  @team/group
+```
+
+### 規則
+
+1. **最後匹配優先** - 最後一行規則優先適用
+2. **多個審查者** - 用空格分隔，都會被指派
+3. **Team** - 使用 `@org/team-name` 自動分配給整個團隊
+
+---
+
+## 配置示例（根據項目調整）
+
+```
+# ==== 全局 =====
+# 任何 GitHub 配置文件由 maintainer 審查
+.github/**                          @maintainer
+
+# ==== Python 後端 =====
+# Python 邏輯由 Python Team 審查
+src/backend/python/app/**           @python-dev
+src/backend/python/tests/**         @python-dev
+
+# 數據庫遷移由 DBA 或 Lead 單獨審查
+src/backend/python/migrations/**    @lead-dev @dba
+
+# ==== TypeScript 前端 =====
+# 前端代碼由 Frontend Team 審查
+src/frontend/src/**                 @frontend-dev
+
+# UI 組件由專門的人審查
+src/frontend/src/components/**      @ui-specialist @frontend-dev
+
+# 樣式文件由前端或設計師審查
+src/frontend/src/**/*.css           @frontend-dev @designer
+
+# ==== C# 後端 =====
+# 後端邏輯由 Csharp Team 審查
+src/backend/csharp/**               @csharp-dev
+src/backend/csharp/Tests/**         @csharp-dev
+
+# ==== 文檔 =====
+# 文檔由任何人都可審查，但最好有人確認
+README.md                           @maintainer
+docs/**                             @tech-lead
+
+# ==== 配置文件 =====
+# 所有配置由 DevOps / Tech Lead 審查
+*.yml                               @devops
+*.yaml                              @devops
+Dockerfile*                         @devops
+docker-compose.yml                  @devops
+
+# ==== 依賴 =====
+# 依賴更新由相應技術棧的 lead 審查
+requirements.txt                    @python-dev
+package.json                        @frontend-dev
+.csproj                             @csharp-dev
+
+# ==== 默認規則 =====
+# 任何其他文件由 maintainer 最終審查
+*                                   @maintainer
+```
+
+---
+
+## 常見場景
+
+### 場景 1: 前端 + 後端混合改動
+
+```
+修改文件：
+- src/frontend/src/api.ts (前端)
+- src/backend/python/app/api.py (後端)
+
+結果：
+- @frontend-dev 被指派（因為 src/frontend/* 匹配）
+- @python-dev 被指派（因為 src/backend/python/* 匹配）
+- 兩個 team 都需要 approve
+```
+
+### 場景 2: 只修改測試
+
+```
+修改文件：
+- src/backend/python/tests/test_api.py
+
+結果：
+- @python-dev 被指派
+- 可在設置中要求只需 1 個 approval
+```
+
+### 場景 3: 數據庫 + 代碼
+
+```
+修改文件：
+- src/backend/python/migrations/0005_add_column.py
+- src/backend/python/app/models.py
+
+結果：
+- migrations/* 匹配 → @lead-dev @dba
+- app/* 匹配 → @python-dev
+- 所有人都被指派
+```
+
+---
+
+## 小團隊配置（1-5 人推薦）
+
+如果團隊人數少，可以這樣配置：
+
+```
+# 小團隊：所有人都審查所有代碼
+* @dev1 @dev2 @dev3
+
+# 或按技術棧拆分
+src/backend/python/**              @dev1
+src/frontend/**                    @dev2
+src/backend/csharp/**              @dev3
+
+# 關鍵改動由 lead 單獨審查
+.github/**                         @lead
+Dockerfile*                        @lead
+docker-compose.yml                 @lead
+```
+
+---
+
+## 驗證與測試
+
+### 查看分配結果
+
+1. 創建測試 PR
+2. 檢查 GitHub PR 頁面
+3. 右側 "Reviewers" 部分應該顯示指派的審查者
+
+### 測試特定文件的分配
+
+```bash
+# 使用 GitHub CLI 預覽（需安裝 gh）
+gh api repos/{owner}/{repo}/codeowners/validate --input=.github/CODEOWNERS
+```
+
+---
+
+## 最佳實踐
+
+### ✅ 推薦
+
+- [ ] 根據領域專長分配
+- [ ] 跨職能的改動指派多個人
+- [ ] 保持 CODEOWNERS 最新
+- [ ] 在團隊變化時及時更新
+- [ ] 使用 GitHub Teams 而非個人
+
+### ❌ 避免
+
+- [ ] 指派過多審查者（>3 人為過多）
+- [ ] 模式過度複雜（維護困難）
+- [ ] 遺忘更新（導致舊人員被分配）
+- [ ] 過度嚴格（減緩開發速度）
+
+---
+
+## 與 Branch Protection Rules 配合
+
+在 GitHub Settings → Branches → Protection Rules 中配置：
+
+```
+✅ Require status checks to pass before merging
+✅ Require code reviews before merging
+   └─ Required number of approvals: 1
+✅ Dismiss stale review approvals when new commits are pushed
+✅ Restrict who can push to matching branches (可選)
+```
+
+結合 CODEOWNERS，會實現：
+1. PR 自動分配審查者
+2. 分配的審查者必須 approve
+3. 所有 CI 檢查必須通過
+4. 才能合併
+
+---
+
+## 維護清單
+
+### 每月複查
+
+- [ ] 檢查是否有人加入/離開團隊
+- [ ] 驗證 CODEOWNERS 中的人員仍在相應團隊
+- [ ] 檢查是否有新的代碼目錄未被覆蓋
+
+### 季度評估
+
+- [ ] 統計每個人被分配的審查數
+- [ ] 檢查是否有審查者過多/過少
+- [ ] 根據反饋調整分配策略
+
+---
+
+## 調試技巧
+
+### 問題：規則沒有生效
+
+```
+檢查清單：
+1. 確認文件在 .github/CODEOWNERS（不是 CODEOWNERS）
+2. 確認語法正確（沒有意外空格）
+3. 確認 GitHub 用戶名正確
+4. 等待 5 分鐘（GitHub 有緩存）
+5. 在 Pull Request 頁面檢查實際分配
+```
+
+### 問題：指派了錯誤的人
+
+```
+1. 編輯 .github/CODEOWNERS
+2. 提交 PR（新 PR 會使用新規則）
+3. 現有 PR 不受影響（GitHub 不會回溯更新）
+```
+
+### 問題：團隊成員看不見分配
+
+```
+確認 GitHub Teams 成員身份：
+1. Go to Organization → Teams
+2. 選擇相應 Team
+3. 確認成員在列表中
+```
+
+---
+
+## 相關資源
+
+- [GitHub CODEOWNERS 官方文檔](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners)
+- [GitHub Teams 管理](https://docs.github.com/en/organizations/organizing-members-into-teams)
+- [Branch Protection Rules](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches)
+
+---
+
+**最後更新：2026-02-13**

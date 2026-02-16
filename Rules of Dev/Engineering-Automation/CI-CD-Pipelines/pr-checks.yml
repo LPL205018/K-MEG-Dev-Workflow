@@ -1,0 +1,203 @@
+name: PR Checks & Code Review Actions
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  pull-requests: write
+  checks: write
+
+jobs:
+  # ===== 自動 PR 檢查 =====
+  pr-validation:
+    runs-on: ubuntu-latest
+    name: "PR Validation"
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 完整歷史，用於比較
+      
+      # 檢查 1: PR 規模
+      - name: Check PR size
+        run: |
+          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }} HEAD | wc -l)
+          CHANGED_LINES=$(git diff -U0 origin/${{ github.base_ref }} HEAD | grep -E "^[+-]" | wc -l)
+          
+          echo "📊 PR Statistics:"
+          echo "   Changed files: $CHANGED_FILES"
+          echo "   Changed lines: $CHANGED_LINES"
+          
+          if [ $CHANGED_FILES -gt 15 ]; then
+            echo "⚠️  大型 PR 提醒：改動超過 15 個文件，建議拆分為更小的 PR"
+          fi
+          
+          if [ $CHANGED_LINES -gt 500 ]; then
+            echo "⚠️  Large PR 提醒：改動超過 500 行，建議拆分為更小的 PR"
+          fi
+      
+      # 檢查 2: 測試文件變動
+      - name: Check test coverage impact
+        run: |
+          TEST_CHANGES=$(git diff origin/${{ github.base_ref }} HEAD | grep -E "^[+-].*test" | wc -l)
+          CODE_CHANGES=$(git diff origin/${{ github.base_ref }} HEAD | grep -E "^[+-].*\.(py|ts|tsx|cs)$" | wc -l)
+          
+          if [ $CODE_CHANGES -gt 0 ] && [ $TEST_CHANGES -eq 0 ]; then
+            echo "⚠️  未發現相應的測試改動"
+            echo "   代碼變動: $CODE_CHANGES 行"
+            echo "   測試變動: $TEST_CHANGES 行"
+            echo "💡 建議: 添加對應的單元測試"
+          fi
+      
+      - name: Post PR comment with checks
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = context.issue.number;
+            
+            // 檢查清單評論
+            const checklist = `
+## ✅ 自動檢查清單
+
+本 PR 已自動檢查以下項目，請在合併前確保全部通過：
+
+### 代碼品質
+- [ ] ✅ 代碼格式檢查 (Prettier/Black) - 自動化執行
+- [ ] ✅ Lint 靜態分析 (ESLint/Ruff) - 自動化執行
+- [ ] ✅ 類型檢查 (TypeScript/Pyright) - 自動化執行
+- [ ] ✅ 單元測試通過 (≥90% 覆蓋) - 自動化執行
+
+### 人工審查
+- [ ] 代碼邏輯清晰易懂
+- [ ] 命名符合規範
+- [ ] 註釋解釋「為什麼」而非「做什麼」
+- [ ] 沒有遺留的 TODO / FIXME
+- [ ] 沒有硬編碼的魔術字符串/數字
+
+### PR 本身
+- [ ] PR 標題清晰明確
+- [ ] PR 描述解釋變動背景
+- [ ] 相關 Issue 已關聯
+- [ ] 文檔已更新（如適用）
+
+---
+
+**自動化檢查結果:** 台北見詳細報告 ↙️
+
+**提示**: 自動化檢查失敗時，PR 會被阻止合併。請點擊詳細報告查看具體錯誤。
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: prNumber,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: checklist
+            });
+
+  # ===== 自動檢查大型 PR =====
+  large-pr-check:
+    runs-on: ubuntu-latest
+    name: "Large PR Detection"
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Flag large PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            
+            const prNumber = context.issue.number;
+            const files = context.payload.pull_request?.changed_files || 0;
+            const additions = context.payload.pull_request?.additions || 0;
+            
+            if (files > 15 || additions > 500) {
+              github.rest.issues.addLabels({
+                issue_number: prNumber,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                labels: ['large-pr', 'needs-review']
+              });
+              
+              github.rest.issues.createComment({
+                issue_number: prNumber,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: '⚠️ **大型 PR 提醒**\n\n此 PR 改動超過標準規模（>15 文件 或 >500 行）。建議拆分為多個較小的 PR 以便審查。'
+              });
+            }
+
+  # ===== 自動檢測覆蓋率下降 =====
+  coverage-regression-check:
+    runs-on: ubuntu-latest
+    name: "Coverage Regression Detection"
+    if: github.event.pull_request.draft == false
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      # 注意：此步驟依賴 coverage.xml 被上傳為 artifact
+      # 需要配合 main-pipeline.yml 中的覆蓋率上傳
+      
+      - name: Compare test coverage
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // 簡化版本：實際使用時建議集成 codecov
+            console.log('Coverage comparison logic would run here');
+            console.log('If coverage dropped >2%, mark PR for review');
+
+  # ===== Dependency 檢查 =====
+  dependency-check:
+    runs-on: ubuntu-latest
+    name: "Dependency Security Check"
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      # Python 依賴
+      - name: Check Python dependencies
+        run: |
+          if [ -f "src/backend/python/requirements.txt" ]; then
+            pip install safety
+            safety check -r src/backend/python/requirements.txt --json || true
+          fi
+      
+      # npm 依賴
+      - name: Check npm dependencies
+        run: |
+          if [ -f "src/frontend/package.json" ]; then
+            cd src/frontend
+            npm audit --production --audit-level=moderate || true
+          fi
+      
+      # .NET 依賴
+      - name: Check .NET dependencies
+        run: |
+          if [ -d "src/backend/csharp" ]; then
+            cd src/backend/csharp
+            dotnet list package --vulnerable
+          fi
+
+  # ===== Draft PR 提醒 =====
+  draft-pr-notice:
+    runs-on: ubuntu-latest
+    name: "Draft PR Notice"
+    if: github.event.pull_request.draft == true
+    
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '📝 **Draft PR 提醒**\n\n此 PR 處於草稿狀態。準備好進行正式審查時，請點擊「Ready for review」按鈕。'
+            });

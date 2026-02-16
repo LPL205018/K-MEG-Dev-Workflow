@@ -1,0 +1,135 @@
+name: Gatekeeper - PM SA SD QA
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, edited]
+    branches: [main, develop]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  g1-pm:
+    name: "G1-PM"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify PRD exists in PR diff
+        run: |
+          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+          echo "$CHANGED_FILES" | grep -E "PRD-.*-v[0-9]+\.md$" >/dev/null \
+            || { echo "❌ G1: Missing PRD file (PRD-*-vX.md)"; exit 1; }
+
+      - name: Verify PRD required fields
+        run: |
+          PRD_FILE=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E "PRD-.*-v[0-9]+\.md$" | head -n1)
+          [ -n "$PRD_FILE" ] || { echo "❌ G1: PRD file not found"; exit 1; }
+          grep -Eq "^requirement_id:" "$PRD_FILE" || { echo "❌ G1: missing requirement_id"; exit 1; }
+          grep -Eq "^prd_id:" "$PRD_FILE" || { echo "❌ G1: missing prd_id"; exit 1; }
+          grep -Eq "^anchor_check:\s*pass" "$PRD_FILE" || { echo "❌ G1: anchor_check must be pass"; exit 1; }
+          grep -Eq "^insufficient_data:\s*false" "$PRD_FILE" || { echo "❌ G1: insufficient_data must be false before SA"; exit 1; }
+          grep -Eq "^socratic_questions:" "$PRD_FILE" || { echo "❌ G1: missing socratic_questions"; exit 1; }
+          grep -Eq "^## acceptance_criteria" "$PRD_FILE" || { echo "❌ G1: missing acceptance_criteria section"; exit 1; }
+          grep -Eq "^## scope_in" "$PRD_FILE" || { echo "❌ G1: missing scope_in section"; exit 1; }
+          grep -Eq "^## scope_out" "$PRD_FILE" || { echo "❌ G1: missing scope_out section"; exit 1; }
+          grep -Eq "^## nfr" "$PRD_FILE" || { echo "❌ G1: missing nfr section"; exit 1; }
+          grep -Eq "^## open_questions" "$PRD_FILE" || { echo "❌ G1: missing open_questions section"; exit 1; }
+          grep -Eq "^## self_check" "$PRD_FILE" || { echo "❌ G1: missing self_check section"; exit 1; }
+          grep -Eq "phase:\s*PM" "$PRD_FILE" || { echo "❌ G1: self_check phase must be PM"; exit 1; }
+          grep -Eq "^\[\]" "$PRD_FILE" || { echo "❌ G1: open_questions must be empty list [] before SA"; exit 1; }
+
+  g2-sa:
+    name: "G2-SA"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify DSD exists in PR diff
+        run: |
+          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+          echo "$CHANGED_FILES" | grep -E "DSD-.*-v[0-9]+\.md$" >/dev/null \
+            || { echo "❌ G2: Missing DSD file (DSD-*-vX.md)"; exit 1; }
+
+      - name: Verify DSD required fields and no TBD
+        run: |
+          DSD_FILE=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E "DSD-.*-v[0-9]+\.md$" | head -n1)
+          [ -n "$DSD_FILE" ] || { echo "❌ G2: DSD file not found"; exit 1; }
+          grep -Eq "^design_id:" "$DSD_FILE" || { echo "❌ G2: missing design_id"; exit 1; }
+          grep -Eq "^prd_id:" "$DSD_FILE" || { echo "❌ G2: missing prd_id"; exit 1; }
+          grep -Eq "^requirement_id:" "$DSD_FILE" || { echo "❌ G2: missing requirement_id"; exit 1; }
+          grep -Eq "^anchor_check:\s*pass" "$DSD_FILE" || { echo "❌ G2: anchor_check must be pass"; exit 1; }
+          grep -Eq "^insufficient_data:\s*false" "$DSD_FILE" || { echo "❌ G2: insufficient_data must be false before SD"; exit 1; }
+          grep -Eq "^socratic_questions:" "$DSD_FILE" || { echo "❌ G2: missing socratic_questions"; exit 1; }
+          grep -Eq "^## api_contract" "$DSD_FILE" || { echo "❌ G2: missing api_contract section"; exit 1; }
+          grep -Eq "^## data_schema" "$DSD_FILE" || { echo "❌ G2: missing data_schema section"; exit 1; }
+          grep -Eq "^## error_code_map" "$DSD_FILE" || { echo "❌ G2: missing error_code_map section"; exit 1; }
+          grep -Eq "^## consistency_strategy" "$DSD_FILE" || { echo "❌ G2: missing consistency_strategy section"; exit 1; }
+          grep -Eq "^## security_controls" "$DSD_FILE" || { echo "❌ G2: missing security_controls section"; exit 1; }
+          grep -Eq "^## self_check" "$DSD_FILE" || { echo "❌ G2: missing self_check section"; exit 1; }
+          grep -Eq "phase:\s*SA" "$DSD_FILE" || { echo "❌ G2: self_check phase must be SA"; exit 1; }
+          ! grep -En "TBD|TODO" "$DSD_FILE" || { echo "❌ G2: DSD contains TBD/TODO"; exit 1; }
+
+  g3-sd:
+    name: "G3-SD"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify PR body has traceability IDs
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          echo "$PR_BODY" | grep -E "REQ-ID" >/dev/null || { echo "❌ G3: missing REQ-ID in PR body"; exit 1; }
+          echo "$PR_BODY" | grep -E "DSD-ID" >/dev/null || { echo "❌ G3: missing DSD-ID in PR body"; exit 1; }
+
+      - name: Verify bugfix has tests (best effort)
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if echo "$PR_TITLE" | grep -Eiq "fix|bug"; then
+            CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+            echo "$CHANGED_FILES" | grep -Ei "test|spec" >/dev/null \
+              || { echo "❌ G3: bugfix PR requires test/spec file changes"; exit 1; }
+          else
+            echo "ℹ️ G3: non-bugfix PR, skip regression test filename check"
+          fi
+
+  g4-qa:
+    name: "G4-QA"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify QA report exists in PR diff
+        run: |
+          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+          echo "$CHANGED_FILES" | grep -E "QA-Report-.*-v[0-9]+\.md$" >/dev/null \
+            || { echo "❌ G4: Missing QA report (QA-Report-*-vX.md)"; exit 1; }
+
+      - name: Verify QA report quality gates
+        run: |
+          QA_FILE=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E "QA-Report-.*-v[0-9]+\.md$" | head -n1)
+          [ -n "$QA_FILE" ] || { echo "❌ G4: QA report file not found"; exit 1; }
+          grep -Eq "^qa_report_id:" "$QA_FILE" || { echo "❌ G4: missing qa_report_id"; exit 1; }
+          grep -Eq "^requirement_id:" "$QA_FILE" || { echo "❌ G4: missing requirement_id"; exit 1; }
+          grep -Eq "^prd_id:" "$QA_FILE" || { echo "❌ G4: missing prd_id"; exit 1; }
+          grep -Eq "^dsd_id:" "$QA_FILE" || { echo "❌ G4: missing dsd_id"; exit 1; }
+          grep -Eq "^pr_id:" "$QA_FILE" || { echo "❌ G4: missing pr_id"; exit 1; }
+          grep -Eq "^anchor_check:\s*pass" "$QA_FILE" || { echo "❌ G4: anchor_check must be pass"; exit 1; }
+          grep -Eq "^insufficient_data:\s*false" "$QA_FILE" || { echo "❌ G4: insufficient_data must be false at QA output"; exit 1; }
+          grep -Eq "^socratic_questions:" "$QA_FILE" || { echo "❌ G4: missing socratic_questions"; exit 1; }
+          grep -Eqi "^ac_pass_rate\\s*:\\s*100%" "$QA_FILE" || { echo "❌ G4: AC pass rate not 100%"; exit 1; }
+          grep -Eqi "^critical_high_defects\\s*:\\s*0" "$QA_FILE" || { echo "❌ G4: Critical/High defects not zero"; exit 1; }
+          grep -q "REQ-ID -> PRD-ID -> DSD-ID -> PR-ID -> QA-REPORT-ID" "$QA_FILE" || { echo "❌ G4: missing traceability chain"; exit 1; }
+          grep -Eq "^## self_check" "$QA_FILE" || { echo "❌ G4: missing self_check section"; exit 1; }
+          grep -Eq "phase:\s*QA" "$QA_FILE" || { echo "❌ G4: self_check phase must be QA"; exit 1; }

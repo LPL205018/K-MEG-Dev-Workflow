@@ -1,0 +1,204 @@
+version: '3.9'
+
+services:
+  # ===== PostgreSQL 主數據庫 =====
+  postgres:
+    image: postgres:16-alpine
+    container_name: k-meg-postgres
+    environment:
+      POSTGRES_USER: devuser
+      POSTGRES_PASSWORD: devpass123
+      POSTGRES_DB: k_meg_dev
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql  # 可選: 初始化腳本
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devuser"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - k-meg-network
+
+  # ===== PgAdmin - PostgreSQL 管理界面 =====
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: k-meg-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@k-meg.local
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_ENHANCED_COOKIE_PROTECTION: 'False'
+      PGADMIN_CONFIG_COOKIE_SAMESITE: 'Lax'
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - k-meg-network
+    profiles:
+      - dev  # 開發環境使用： docker-compose --profile dev up
+
+  # ===== Redis 緩存層 =====
+  redis:
+    image: redis:7-alpine
+    container_name: k-meg-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - k-meg-network
+
+  # ===== Redis Commander - Redis 可視化工具 =====
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: k-meg-redis-commander
+    environment:
+      - REDIS_HOSTS=default:redis:6379
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    networks:
+      - k-meg-network
+    profiles:
+      - dev
+
+  # ===== Python FastAPI 後端 =====
+  backend-python:
+    build:
+      context: ./src/backend/python
+      dockerfile: Dockerfile
+    container_name: k-meg-backend-python
+    environment:
+      # 數據庫配置
+      DATABASE_URL: postgresql://devuser:devpass123@postgres:5432/k_meg_dev
+      # Redis 配置
+      REDIS_URL: redis://redis:6379/0
+      # 應用配置
+      ENVIRONMENT: development
+      DEBUG: "true"
+      LOG_LEVEL: INFO
+      # API 配置
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src/backend/python:/app
+      - /app/__pycache__  # 忽略 pycache
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - k-meg-network
+    command: >
+      bash -c "
+        pip install -r requirements.txt &&
+        alembic upgrade head &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+
+  # ===== C# .NET 後端 =====
+  backend-csharp:
+    build:
+      context: ./src/backend/csharp
+      dockerfile: Dockerfile
+    container_name: k-meg-backend-csharp
+    environment:
+      # 數據庫配置
+      ConnectionStrings__DefaultConnection: "Server=postgres;Database=k_meg_dev;User Id=devuser;Password=devpass123;"
+      # Redis 配置
+      Redis__Host: redis
+      Redis__Port: "6379"
+      # 應用配置
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8001
+      Logging__LogLevel__Default: Information
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./src/backend/csharp:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - k-meg-network
+    healthcheck:
+      test: ["CMD", "curl", "--silent", "--fail", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===== TypeScript + React 前端 =====
+  frontend:
+    build:
+      context: ./src/frontend
+      dockerfile: Dockerfile.dev
+    container_name: k-meg-frontend
+    environment:
+      # API 端點配置
+      VITE_API_URL: http://localhost:8000  # Python FastAPI
+      VITE_API_URL_CSHARP: http://localhost:8001  # C# .NET
+      # 其他環境變數
+      VITE_ENVIRONMENT: development
+    ports:
+      - "5173:5173"  # Vite 開發服務器
+    volumes:
+      - ./src/frontend:/app
+      - /app/node_modules  # 忽略 node_modules
+    networks:
+      - k-meg-network
+    command: npm run dev
+
+  # ===== API 文檔（Swagger/OpenAPI） =====
+  api-docs:
+    image: swaggerapi/swagger-ui:latest
+    container_name: k-meg-api-docs
+    environment:
+      - SWAGGER_JSON_URL=http://localhost:8000/openapi.json
+      - URL=http://localhost:8000/docs
+    ports:
+      - "9090:8080"
+    depends_on:
+      - backend-python
+    networks:
+      - k-meg-network
+    profiles:
+      - dev
+
+  # ===== MailCatcher - 本地郵件測試 =====
+  mailcatcher:
+    image: schickling/mailcatcher:latest
+    container_name: k-meg-mailcatcher
+    ports:
+      - "1025:1025"  # SMTP
+      - "1080:1080"  # Web UI
+    networks:
+      - k-meg-network
+    profiles:
+      - dev
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  k-meg-network:
+    driver: bridge
