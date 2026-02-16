@@ -1,0 +1,13 @@
+# Default owner for this repository
+* @LPL205018
+
+# Governance and workflow definitions
+Rules of Dev/** @LPL205018
+
+# GitHub automation config
+.github/** @LPL205018
+
+# Core release docs
+README.md @LPL205018
+CHANGELOG.md @LPL205018
+
